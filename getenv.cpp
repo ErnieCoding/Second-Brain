@@ -15,9 +15,9 @@ ifstream get_file(const string& filepath)
     return file;
 }
 
-map<string, string> load_env(ifstream& file)
+map<string, const char*> load_env(ifstream& file)
 {
-    map<string, string> env_vars;
+    map<string, const char*> env_vars;
 
     string line;
     while(getline(file, line)) {
@@ -32,7 +32,9 @@ map<string, string> load_env(ifstream& file)
             value.erase(0, value.find_first_not_of(" \t"));
             value.erase(value.find_last_not_of(" \t") + 1);
 
-            env_vars[key] = value;
+            const char* final_value = value.c_str();
+
+            env_vars[key] = final_value;
         }
     }
 

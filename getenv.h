@@ -10,6 +10,6 @@ using namespace std;
 
 ifstream get_file(const string& filepath);
 
-map<string, string> load_env(ifstream& file);
+map<string, const char*> load_env(ifstream& file);
 
 #endif
