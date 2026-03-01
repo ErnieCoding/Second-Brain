@@ -46,3 +46,6 @@
 # other
 .vscode/
 build/
+.vs/
+CLAUDE.md
+.claude/
