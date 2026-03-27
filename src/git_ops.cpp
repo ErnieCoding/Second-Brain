@@ -7,6 +7,7 @@
 #include <ctime>
 #include <iomanip>
 #include <filesystem>
+#include <cstring>
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -129,6 +130,30 @@ bool repo_is_dirty(git_repository* repo) {
     return dirty;
 }
 
+// Callback for git_index_add_all: skip ignored files and nested git repos.
+// libgit2 reports nested repos as paths with a trailing '/'; trying to add
+// them returns "invalid path" before the ignore check fires, so we intercept
+// them here.  We also call git_ignore_path_is_ignored explicitly because
+// spaces in .gitignore patterns can trip up libgit2's internal matching on
+// some builds.
+static int stage_filter_cb(const char* path,
+                            const char* /*matched_pathspec*/,
+                            void* payload)
+{
+    // Trailing slash → nested git repo; skip it.
+    size_t len = strlen(path);
+    if (len > 0 && path[len - 1] == '/')
+        return 1;  // positive = skip
+
+    // Explicit ignore check (belt-and-suspenders against spaces in patterns).
+    auto* repo = static_cast<git_repository*>(payload);
+    int ignored = 0;
+    if (git_ignore_path_is_ignored(&ignored, repo, path) == 0 && ignored)
+        return 1;
+
+    return 0;  // 0 = add
+}
+
 int repo_stage_all(git_repository* repo, git_oid* out_tree_oid) {
     git_index* index = nullptr;
     int err = git_repository_index(&index, repo);
@@ -136,9 +161,8 @@ int repo_stage_all(git_repository* repo, git_oid* out_tree_oid) {
 
     git_strarray pathspec = {nullptr, 0};
     err = git_index_add_all(index, &pathspec,
-                            GIT_INDEX_ADD_DEFAULT |
-                            GIT_INDEX_ADD_FORCE,
-                            nullptr, nullptr);
+                            GIT_INDEX_ADD_DEFAULT,
+                            stage_filter_cb, repo);
     if (err != 0) { log_git_error("git_index_add_all", err); git_index_free(index); return err; }
 
     err = git_index_write(index);
