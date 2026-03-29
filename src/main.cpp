@@ -10,8 +10,9 @@ bool service_install(const std::string& exe_path);
 bool service_uninstall();
 
 #ifdef _WIN32
-// Enters the Windows Service Control Dispatcher (blocks until service stops)
-void run_as_service();
+// Enters the Windows Service Control Dispatcher (blocks until service stops).
+// config_path overrides the default location — used when invoked via --service.
+void run_as_service(const std::string& config_path);
 #else
 void run_with_signals(SyncLoop& loop);
 #endif
@@ -28,12 +29,14 @@ static void print_usage(const char* argv0) {
 }
 
 int main(int argc, char* argv[]) {
-    const std::string config_path = get_config_path();
+    // NOTE: do NOT call get_config_path() here — under LocalSystem (service context)
+    // SHGetFolderPathA can hang for 30 s trying to initialize a missing user profile,
+    // which causes the SCM to time out before StartServiceCtrlDispatcherA is reached.
 
     // No arguments: on Windows try the service dispatcher, otherwise show usage
     if (argc < 2) {
 #ifdef _WIN32
-        run_as_service();
+        run_as_service("");
         return 0;
 #else
         print_usage(argv[0]);
@@ -42,6 +45,20 @@ int main(int argc, char* argv[]) {
     }
 
     const std::string cmd = argv[1];
+
+#ifdef _WIN32
+    // Invoked by the Windows SCM when starting the service.
+    // The config path is baked in by --install so it resolves to the correct
+    // user profile regardless of the service account.
+    if (cmd == "--service") {
+        std::string config_path = (argc > 2) ? argv[2] : "";
+        run_as_service(config_path);
+        return 0;
+    }
+#endif
+
+    // All remaining commands need the config path — resolve it now (user context only).
+    const std::string config_path = get_config_path();
 
     if (cmd == "--add-repo") {
         AppConfig cfg = load_config(config_path);

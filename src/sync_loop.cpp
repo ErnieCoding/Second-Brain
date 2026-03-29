@@ -143,6 +143,9 @@ void SyncLoop::stop() {
 
 void SyncLoop::sync_repo(const RepoConfig& cfg) {
     git_libgit2_init();
+    // Allow opening repos not owned by the current OS user (needed when running
+    // as LocalSystem service — repos are owned by the interactive user account).
+    git_libgit2_opts(GIT_OPT_SET_OWNER_VALIDATION, 0);
     setup_ssl();
     git_repository* repo = nullptr;
     if (repo_open(&repo, cfg.path) != 0) {

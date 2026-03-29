@@ -1,10 +1,13 @@
 #include "logger.h"
 #include <git2.h>
 #include <iostream>
+#include <fstream>
 #include <chrono>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+
+static std::ofstream g_log_file;
 
 static std::string current_timestamp() {
     auto now = std::chrono::system_clock::now();
@@ -30,9 +33,18 @@ static const char* level_str(LogLevel level) {
     return "?????";
 }
 
+void log_enable_file(const std::string& path) {
+    g_log_file.open(path, std::ios::app);
+}
+
 void log(LogLevel level, const std::string& msg) {
-    std::cerr << "[" << current_timestamp() << "] ["
-              << level_str(level) << "] " << msg << "\n";
+    std::string line = "[" + current_timestamp() + "] [" +
+                       level_str(level) + "] " + msg + "\n";
+    std::cerr << line;
+    if (g_log_file.is_open()) {
+        g_log_file << line;
+        g_log_file.flush();
+    }
 }
 
 void log_info(const std::string& msg)  { log(LogLevel::Info,  msg); }

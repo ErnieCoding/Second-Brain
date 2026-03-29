@@ -9,6 +9,7 @@
 static SERVICE_STATUS        g_status{};
 static SERVICE_STATUS_HANDLE g_handle  = nullptr;
 static SyncLoop*             g_loop    = nullptr;
+static std::string           g_config_path;
 
 static void set_service_state(DWORD state, DWORD exit_code = NO_ERROR) {
     g_status.dwCurrentState  = state;
@@ -29,17 +30,26 @@ void WINAPI ServiceHandler(DWORD control) {
 }
 
 void WINAPI ServiceMain(DWORD /*argc*/, LPTSTR* /*argv*/) {
+    make_dirs("C:\\ProgramData\\second-brain");
+    log_enable_file("C:\\ProgramData\\second-brain\\service.log");
+    log_info("ServiceMain started");
+
     g_handle = RegisterServiceCtrlHandlerA("second-brain", ServiceHandler);
-    if (!g_handle) return;
+    if (!g_handle) {
+        log_error("RegisterServiceCtrlHandlerA failed");
+        return;
+    }
 
     g_status.dwServiceType      = SERVICE_WIN32_OWN_PROCESS;
     g_status.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
     g_status.dwCheckPoint       = 0;
     g_status.dwWaitHint         = 0;
     set_service_state(SERVICE_RUNNING);
+    log_info("Reported SERVICE_RUNNING");
 
     try {
-        AppConfig cfg = load_config(get_config_path());
+        std::string path = g_config_path.empty() ? get_config_path() : g_config_path;
+        AppConfig cfg = load_config(path);
         SyncLoop loop(cfg);
         g_loop = &loop;
         loop.run();  // blocks until stop() is called
@@ -51,7 +61,8 @@ void WINAPI ServiceMain(DWORD /*argc*/, LPTSTR* /*argv*/) {
     set_service_state(SERVICE_STOPPED);
 }
 
-void run_as_service() {
+void run_as_service(const std::string& config_path) {
+    g_config_path = config_path;
     SERVICE_TABLE_ENTRYA dispatch_table[] = {
         {const_cast<char*>("second-brain"), ServiceMain},
         {nullptr, nullptr}
@@ -60,6 +71,19 @@ void run_as_service() {
 }
 
 bool service_install(const std::string& exe_path) {
+    // Resolve the config path now, in the installing user's context.
+    // It gets baked into the service binary path so the service can find it
+    // even when running under the LocalSystem account.
+    std::string config_path;
+    try {
+        config_path = get_config_path();
+    } catch (const std::exception& ex) {
+        log_error(std::string("Cannot determine config path: ") + ex.what());
+        return false;
+    }
+    // Quote both paths to handle spaces; pass config path as --service argument.
+    std::string binary_path = "\"" + exe_path + "\" --service \"" + config_path + "\"";
+
     SC_HANDLE scm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE);
     if (!scm) {
         log_error("OpenSCManager failed. Run as Administrator.");
@@ -73,7 +97,7 @@ bool service_install(const std::string& exe_path) {
         SERVICE_WIN32_OWN_PROCESS,
         SERVICE_AUTO_START,
         SERVICE_ERROR_NORMAL,
-        exe_path.c_str(),
+        binary_path.c_str(),
         nullptr, nullptr, nullptr,
         nullptr,   // LocalSystem account
         nullptr

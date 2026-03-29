@@ -43,7 +43,11 @@ ConflictChoice prompt_conflict(const std::string& path,
 
     std::string input;
     while (true) {
-        std::getline(std::cin, input);
+        if (!std::getline(std::cin, input)) {
+            // stdin is closed (e.g. running as a service with no console) —
+            // abort the merge rather than spinning forever on EOF.
+            return ConflictChoice::Skip;
+        }
         if (input == "o" || input == "O") return ConflictChoice::Ours;
         if (input == "t" || input == "T") return ConflictChoice::Theirs;
         if (input == "s" || input == "S") return ConflictChoice::Skip;

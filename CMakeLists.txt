@@ -90,8 +90,12 @@ if(WIN32)
         "${MSYS2_UCRT64_BIN}/libwinpthread-1.dll"
         "${MSYS2_UCRT64_BIN}/libstdc++-6.dll"
         "${MSYS2_UCRT64_BIN}/libssh2-1.dll"
+        "${MSYS2_UCRT64_BIN}/libssl-3-x64.dll"
+        "${MSYS2_UCRT64_BIN}/libcrypto-3-x64.dll"
+        "${MSYS2_UCRT64_BIN}/zlib1.dll"
         "${MSYS2_UCRT64_BIN}/libpcre2-8-0.dll"
-        "${MSYS2_UCRT64_BIN}/libhttp_parser-2.9.dll"
+        "${MSYS2_UCRT64_BIN}/libhttp_parser-2.dll"
+        "${MSYS2_UCRT64_BIN}/libiconv-2.dll"
     )
     foreach(DLL ${REQUIRED_DLLS})
         if(EXISTS "${DLL}")
