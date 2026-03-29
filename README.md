@@ -138,7 +138,7 @@ Open **Command Prompt or PowerShell as Administrator**, then run:
 
 ```bash
 ./build/second-brain.exe --install
-sc start second-brain # initial start
+sc.exe start second-brain # initial start
 
 # OPTIONAL
 Get-Content C:\ProgramData\second-brain\service.log # check service logs for debugging
@@ -148,11 +148,11 @@ This registers `second-brain` as a Windows Service set to start automatically at
 
 ```cmd
 # Check status
-sc query second-brain
+sc.exe query second-brain
 
 # Start / stop manually
-sc start second-brain
-sc stop second-brain
+sc.exe start second-brain
+sc.exe stop second-brain
 
 # Open the Services GUI
 services.msc

@@ -49,8 +49,7 @@ void WINAPI ServiceMain(DWORD /*argc*/, LPTSTR* /*argv*/) {
 
     try {
         std::string path = g_config_path.empty() ? get_config_path() : g_config_path;
-        AppConfig cfg = load_config(path);
-        SyncLoop loop(cfg);
+        SyncLoop loop(path);
         g_loop = &loop;
         loop.run();  // blocks until stop() is called
         g_loop = nullptr;

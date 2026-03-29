@@ -4,6 +4,8 @@
 #include "logger.h"
 #include <git2.h>
 #include <chrono>
+#include <filesystem>
+#include <set>
 #include <thread>
 #include <sstream>
 #include <ctime>
@@ -122,26 +124,100 @@ static void perform_sync_cycle(git_repository* repo, const RepoConfig& cfg) {
 
 // SyncLoop
 
-SyncLoop::SyncLoop(const AppConfig& cfg) : cfg_(cfg) {}
+SyncLoop::SyncLoop(const std::string& config_path) : config_path_(config_path) {}
 
 SyncLoop::~SyncLoop() {
     stop();
-    for (auto& t : threads_) if (t.joinable()) t.join();
+    if (watcher_thread_.joinable()) watcher_thread_.join();
+    // Join threads that were removed from repos_ by the watcher but not yet joined
+    for (auto& t : pending_join_) if (t.joinable()) t.join();
+    // Join any remaining active threads (running flags already cleared by stop())
+    for (auto& [path, entry] : repos_) if (entry.thread.joinable()) entry.thread.join();
 }
 
 void SyncLoop::run() {
-    running_ = true;
-    for (const auto& repo_cfg : cfg_.repos) {
-        threads_.emplace_back(&SyncLoop::sync_repo, this, repo_cfg);
+    loop_running_ = true;
+
+    try {
+        AppConfig cfg = load_config(config_path_);
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& repo_cfg : cfg.repos) start_repo(repo_cfg);
+    } catch (const std::exception& ex) {
+        log_error(std::string("Failed to load initial config: ") + ex.what());
     }
-    for (auto& t : threads_) t.join();
+
+    watcher_thread_ = std::thread(&SyncLoop::watch_config, this);
+
+    while (loop_running_.load())
+        std::this_thread::sleep_for(std::chrono::seconds(1));
 }
 
 void SyncLoop::stop() {
-    running_ = false;
+    loop_running_ = false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [path, entry] : repos_) *entry.running = false;
 }
 
-void SyncLoop::sync_repo(const RepoConfig& cfg) {
+void SyncLoop::start_repo(const RepoConfig& cfg) {
+    auto running = std::make_shared<std::atomic<bool>>(true);
+    repos_.emplace(cfg.path, RepoEntry{
+        running,
+        std::thread(&SyncLoop::sync_repo, this, cfg, running)
+    });
+}
+
+void SyncLoop::watch_config() {
+    namespace fs = std::filesystem;
+    fs::file_time_type last_mtime{};
+
+    while (loop_running_.load()) {
+        // Sleep in 1 s increments so stop() is noticed quickly
+        for (int i = 0; i < 10 && loop_running_.load(); ++i)
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        if (!loop_running_.load()) break;
+
+        // Only reload when the file has actually changed
+        std::error_code ec;
+        auto mtime = fs::last_write_time(config_path_, ec);
+        if (ec || mtime == last_mtime) continue;
+        last_mtime = mtime;
+
+        AppConfig new_cfg;
+        try {
+            new_cfg = load_config(config_path_);
+        } catch (const std::exception& ex) {
+            log_error(std::string("Config reload error: ") + ex.what());
+            continue;
+        }
+
+        std::set<std::string> new_paths;
+        for (const auto& r : new_cfg.repos) new_paths.insert(r.path);
+
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Start threads for repos that appear in the new config but aren't running
+        for (const auto& r : new_cfg.repos) {
+            if (repos_.find(r.path) == repos_.end()) {
+                log_info("Config changed: starting new repo " + r.path);
+                start_repo(r);
+            }
+        }
+
+        // Signal and evict repos that were removed from the config
+        for (auto it = repos_.begin(); it != repos_.end(); ) {
+            if (new_paths.find(it->first) == new_paths.end()) {
+                log_info("Config changed: stopping removed repo " + it->first);
+                *it->second.running = false;
+                pending_join_.push_back(std::move(it->second.thread));
+                it = repos_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+}
+
+void SyncLoop::sync_repo(RepoConfig cfg, std::shared_ptr<std::atomic<bool>> running) {
     git_libgit2_init();
     // Allow opening repos not owned by the current OS user (needed when running
     // as LocalSystem service — repos are owned by the interactive user account).
@@ -156,7 +232,7 @@ void SyncLoop::sync_repo(const RepoConfig& cfg) {
     log_info("Monitoring: " + cfg.path + " (poll every " +
              std::to_string(cfg.poll_interval_seconds) + "s)");
 
-    while (running_.load()) {
+    while (running->load()) {
         try {
             perform_sync_cycle(repo, cfg);
         } catch (const std::exception& ex) {
@@ -164,14 +240,13 @@ void SyncLoop::sync_repo(const RepoConfig& cfg) {
         } catch (...) {
             log_error("Sync cycle unknown exception — continuing.");
         }
-        for (uint32_t i = 0; i < cfg.poll_interval_seconds && running_.load(); ++i) {
+        for (uint32_t i = 0; i < cfg.poll_interval_seconds && running->load(); ++i)
             std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
     }
     repo_cleanup(repo);
 }
 
-void run_sync_loop(const AppConfig& cfg) {
-    SyncLoop loop(cfg);
+void run_sync_loop(const std::string& config_path) {
+    SyncLoop loop(config_path);
     loop.run();
 }

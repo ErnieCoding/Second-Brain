@@ -29,11 +29,7 @@ static void print_usage(const char* argv0) {
 }
 
 int main(int argc, char* argv[]) {
-    // NOTE: do NOT call get_config_path() here — under LocalSystem (service context)
-    // SHGetFolderPathA can hang for 30 s trying to initialize a missing user profile,
-    // which causes the SCM to time out before StartServiceCtrlDispatcherA is reached.
 
-    // No arguments: on Windows try the service dispatcher, otherwise show usage
     if (argc < 2) {
 #ifdef _WIN32
         run_as_service("");
@@ -47,9 +43,6 @@ int main(int argc, char* argv[]) {
     const std::string cmd = argv[1];
 
 #ifdef _WIN32
-    // Invoked by the Windows SCM when starting the service.
-    // The config path is baked in by --install so it resolves to the correct
-    // user profile regardless of the service account.
     if (cmd == "--service") {
         std::string config_path = (argc > 2) ? argv[2] : "";
         run_as_service(config_path);
@@ -57,7 +50,6 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    // All remaining commands need the config path — resolve it now (user context only).
     const std::string config_path = get_config_path();
 
     if (cmd == "--add-repo") {
@@ -82,17 +74,19 @@ int main(int argc, char* argv[]) {
     }
 
     if (cmd == "--run") {
-        AppConfig cfg = load_config(config_path);
-        if (cfg.repos.empty()) {
-            std::cerr << "No repositories configured. Run --add-repo first.\n";
-            return 1;
+        {
+            AppConfig cfg = load_config(config_path);
+            if (cfg.repos.empty()) {
+                std::cerr << "No repositories configured. Run --add-repo first.\n";
+                return 1;
+            }
         }
         log_info("Starting sync daemon (foreground mode)...");
 #ifdef _WIN32
-        run_sync_loop(cfg);
+        run_sync_loop(config_path);
 #else
         {
-            SyncLoop loop(cfg);
+            SyncLoop loop(config_path);
             run_with_signals(loop);
         }
 #endif
