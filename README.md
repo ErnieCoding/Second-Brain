@@ -136,8 +136,12 @@ Press `Ctrl+C` to stop. Useful for verifying that sync works before installing a
 
 Open **Command Prompt or PowerShell as Administrator**, then run:
 
-```cmd
-build\second-brain.exe --install
+```bash
+./build/second-brain.exe --install
+sc start second-brain # initial start
+
+# OPTIONAL
+Get-Content C:\ProgramData\second-brain\service.log # check service logs for debugging
 ```
 
 This registers `second-brain` as a Windows Service set to start automatically at login. You can manage it like any other service:
