@@ -54,9 +54,20 @@ bool service_install(const std::string& exe_path) {
         return false;
     }
 
+    // systemd requires an absolute ExecStart path; argv[0] is often relative.
+    std::error_code ec;
+    std::filesystem::path abs_exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec) {
+        abs_exe = std::filesystem::canonical(exe_path, ec);
+        if (ec) {
+            log_error("Cannot resolve absolute path of executable: " + exe_path);
+            return false;
+        }
+    }
+
     std::string content = UNIT_TEMPLATE;
     size_t pos = content.find("SECOND_BRAIN_EXE");
-    if (pos != std::string::npos) content.replace(pos, 16, exe_path);
+    if (pos != std::string::npos) content.replace(pos, 16, "\"" + abs_exe.string() + "\"");
 
     std::ofstream f(unit_path);
     if (!f.is_open()) {
