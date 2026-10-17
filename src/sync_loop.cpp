@@ -36,10 +36,13 @@ static void perform_sync_cycle(git_repository* repo, const RepoConfig& cfg) {
     // Step 1: commit local changes (no push yet).
     // Committing first protects dirty files from being overwritten by the
     // checkout that happens during fast-forward in step 3.
+    // repo_is_dirty can report changes that staging deliberately skips (e.g. a
+    // nested git repo), so only commit if the staged tree differs from HEAD.
     if (repo_is_dirty(repo)) {
-        log_info("[" + cfg.path + "] Local changes detected — committing...");
         git_oid tree_oid;
-        if (repo_stage_all(repo, &tree_oid) == 0) {
+        if (repo_stage_all(repo, &tree_oid) == 0 &&
+            !repo_tree_matches_head(repo, &tree_oid)) {
+            log_info("[" + cfg.path + "] Local changes detected — committing...");
             git_oid commit_oid;
             std::string msg = auto_commit_message();
             if (repo_commit(repo, &tree_oid,

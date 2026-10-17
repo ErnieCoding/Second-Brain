@@ -37,6 +37,9 @@ bool repo_is_dirty(git_repository* repo);
 // Stage all changes (git add -A). Writes tree OID to out_tree_oid. Returns 0 on success
 int repo_stage_all(git_repository* repo, git_oid* out_tree_oid);
 
+// True if tree_oid is identical to HEAD's tree (i.e. committing would be empty)
+bool repo_tree_matches_head(git_repository* repo, const git_oid* tree_oid);
+
 // Create an auto-commit using the given tree OID. Returns 0 on success
 int repo_commit(git_repository* repo,
                 const git_oid* tree_oid,

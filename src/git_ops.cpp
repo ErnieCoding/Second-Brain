@@ -106,6 +106,13 @@ int repo_open(git_repository** out, const std::string& path) {
     return err;
 }
 
+// With RECURSE_UNTRACKED_DIRS, libgit2 descends into plain untracked folders
+// but reports a nested git repo as a single path with a trailing '/'.
+static bool is_nested_repo_path(const char* path) {
+    size_t len = path ? strlen(path) : 0;
+    return len > 0 && path[len - 1] == '/';
+}
+
 bool repo_is_dirty(git_repository* repo) {
     git_status_options opts = GIT_STATUS_OPTIONS_INIT;
     opts.show  = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
@@ -120,6 +127,11 @@ bool repo_is_dirty(git_repository* repo) {
     size_t count = git_status_list_entrycount(list);
     for (size_t i = 0; i < count; ++i) {
         const git_status_entry* e = git_status_byindex(list, i);
+        // Nested repos are never staged (see stage_filter_cb), so they must
+        // not count as changes either.
+        if (e->status == GIT_STATUS_WT_NEW && e->index_to_workdir &&
+            is_nested_repo_path(e->index_to_workdir->new_file.path))
+            continue;
         if (e->status != GIT_STATUS_CURRENT &&
             !(e->status & GIT_STATUS_IGNORED)) {
             dirty = true;
@@ -140,9 +152,7 @@ static int stage_filter_cb(const char* path,
                             const char* /*matched_pathspec*/,
                             void* payload)
 {
-    // Trailing slash → nested git repo; skip it.
-    size_t len = strlen(path);
-    if (len > 0 && path[len - 1] == '/')
+    if (is_nested_repo_path(path))
         return 1;  // positive = skip
 
     // Explicit ignore check (belt-and-suspenders against spaces in patterns).
@@ -173,6 +183,15 @@ int repo_stage_all(git_repository* repo, git_oid* out_tree_oid) {
 
     git_index_free(index);
     return err;
+}
+
+bool repo_tree_matches_head(git_repository* repo, const git_oid* tree_oid) {
+    git_object* head_tree = nullptr;
+    if (git_revparse_single(&head_tree, repo, "HEAD^{tree}") != 0)
+        return false;  // unborn HEAD: nothing to compare against
+    bool same = git_oid_equal(git_object_id(head_tree), tree_oid) != 0;
+    git_object_free(head_tree);
+    return same;
 }
 
 int repo_commit(git_repository* repo,
