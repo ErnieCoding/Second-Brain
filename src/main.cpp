@@ -23,6 +23,8 @@ static void print_usage(const char* argv0) {
         << "Commands:\n"
         << "  --add-repo      Interactively add a repository to the config\n"
         << "  --list-repos    List all configured repositories\n"
+        << "  --remove-repo [path|number]\n"
+        << "                  Stop tracking a repository (prompts if no argument)\n"
         << "  --run           Run the sync daemon in the foreground\n"
         << "  --install       Install as a system service\n"
         << "  --uninstall     Remove the system service\n";
@@ -56,6 +58,12 @@ int main(int argc, char* argv[]) {
         AppConfig cfg = load_config(config_path);
         add_repo_interactive(cfg, config_path);
         return 0;
+    }
+
+    if (cmd == "--remove-repo") {
+        AppConfig cfg = load_config(config_path);
+        std::string target = (argc > 2) ? argv[2] : "";
+        return remove_repo(cfg, config_path, target) ? 0 : 1;
     }
 
     if (cmd == "--list-repos") {

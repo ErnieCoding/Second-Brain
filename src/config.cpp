@@ -8,6 +8,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <filesystem>
+#include <cctype>
 
 using json = nlohmann::json;
 
@@ -152,4 +153,68 @@ void add_repo_interactive(AppConfig& cfg, const std::string& config_path) {
     cfg.repos.push_back(r);
     save_config(cfg, config_path);
     std::cout << "Saved to " << config_path << "\n";
+}
+
+// ── remove repo ──────────────────────────────────────────────────────────────
+
+// Canonical form for comparing paths typed in different styles.
+static std::string normalize_path(std::string p) {
+#ifdef _WIN32
+    for (char& ch : p) {
+        if (ch == '\\') ch = '/';
+        else ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+#endif
+    while (p.size() > 1 && p.back() == '/') p.pop_back();
+    return p;
+}
+
+bool remove_repo(AppConfig& cfg, const std::string& config_path,
+                 const std::string& target) {
+    if (cfg.repos.empty()) {
+        std::cout << "No repositories configured.\n";
+        return false;
+    }
+
+    std::string choice = target;
+    if (choice.empty()) {
+        std::cout << "\n=== Remove Repository ===\n";
+        for (size_t i = 0; i < cfg.repos.size(); ++i)
+            std::cout << "  " << (i + 1) << ". " << cfg.repos[i].path
+                      << "  [" << cfg.repos[i].remote << "/" << cfg.repos[i].branch << "]\n";
+        choice = prompt("Number or path of repo to remove (blank to cancel)");
+        if (choice.empty()) {
+            std::cout << "Cancelled.\n";
+            return false;
+        }
+    }
+
+    // Match by path first, so a numeric-looking path is never misread as an index.
+    size_t idx = cfg.repos.size();
+    const std::string want = normalize_path(choice);
+    for (size_t i = 0; i < cfg.repos.size(); ++i) {
+        if (normalize_path(cfg.repos[i].path) == want) { idx = i; break; }
+    }
+    if (idx == cfg.repos.size()) {
+        try {
+            size_t used = 0;
+            unsigned long n = std::stoul(choice, &used);
+            if (used == choice.size() && n >= 1 && n <= cfg.repos.size()) idx = n - 1;
+        } catch (...) {}
+    }
+    if (idx == cfg.repos.size()) {
+        std::cerr << "No tracked repository matches '" << choice
+                  << "'. Use --list-repos to see tracked paths.\n";
+        return false;
+    }
+
+    const std::string removed = cfg.repos[idx].path;
+    cfg.repos.erase(cfg.repos.begin() + static_cast<std::ptrdiff_t>(idx));
+    if (!save_config(cfg, config_path)) {
+        std::cerr << "Failed to save config.\n";
+        return false;
+    }
+    std::cout << "Removed " << removed << " from tracking.\n"
+              << "(The repository itself is untouched. A running daemon stops syncing it within ~10s.)\n";
+    return true;
 }

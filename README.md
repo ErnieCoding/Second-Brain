@@ -95,6 +95,18 @@ The token is stored in plain text in the config JSON. Ensure the file has approp
 ./build/second-brain --list-repos
 ```
 
+### Removing a repository
+
+```bash
+./build/second-brain --remove-repo                 # lists repos, prompts for a number or path
+./build/second-brain --remove-repo 2               # by number (as shown in the prompt)
+./build/second-brain --remove-repo "/home/user/vaults/main-vault"   # by path
+```
+
+This only stops tracking the repo (it deletes its entry from the config); the repository and its
+files are never touched. On Windows, paths match regardless of slash style, case, or a trailing slash.
+A running daemon or service notices the change within about 10 seconds and stops syncing it — no restart needed.
+
 ### Config file format
 
 ```json

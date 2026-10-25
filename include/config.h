@@ -26,3 +26,9 @@ AppConfig load_config(const std::string& path);
 bool save_config(const AppConfig& cfg, const std::string& path);
 
 void add_repo_interactive(AppConfig& cfg, const std::string& config_path);
+
+// Remove a repo from tracking. If `target` is empty, lists repos and prompts for
+// a number; otherwise `target` is a path (separator/case-insensitive on Windows)
+// or a 1-based index. Returns true if a repo was removed and the config saved.
+bool remove_repo(AppConfig& cfg, const std::string& config_path,
+                 const std::string& target = "");
