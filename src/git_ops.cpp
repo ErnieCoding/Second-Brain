@@ -59,6 +59,113 @@ void setup_ssl() {
              "Install ca-certificates (Linux) or ensure MSYS2 ssl certs are present (Windows).");
 }
 
+// ── Global git config sanitising ──────────────────────────────────────────────
+// libgit2 applies `url.<base>.insteadOf` rewrites from the user's global
+// ~/.gitconfig. A rule such as
+//     [url "git@github.com:"] insteadOf = https://github.com/
+// turns our stored HTTPS remote into an SSH one. The daemon only holds an HTTPS
+// token, so the fetch then fails with a misleading "http.followRedirects" error.
+// We keep the rest of the user's global config (identity, line endings, proxy,
+// ...) and only drop rewrite rules whose replacement is an SSH URL.
+
+static bool is_ssh_style_url(const std::string& s) {
+    if (s.rfind("ssh://", 0) == 0 || s.rfind("git+ssh://", 0) == 0 ||
+        s.rfind("ssh+git://", 0) == 0)
+        return true;
+    // scp-like syntax: [user@]host:path, with the colon before any slash.
+    // colon > 1 keeps Windows drive letters ("C:/...") from matching.
+    if (s.find("://") != std::string::npos) return false;
+    size_t colon = s.find(':');
+    size_t slash = s.find('/');
+    return colon != std::string::npos && colon > 1 &&
+           (slash == std::string::npos || colon < slash);
+}
+
+struct ConfigCopyCtx {
+    git_config* out     = nullptr;
+    int         dropped = 0;
+};
+
+static int copy_config_entry_cb(const git_config_entry* e, void* payload) {
+    auto* ctx = static_cast<ConfigCopyCtx*>(payload);
+
+    // libgit2 lower-cases section and key names; the subsection (the rewrite
+    // target) keeps its case. Matches url.<base>.insteadof / .pushinsteadof.
+    const std::string name = e->name;
+    if (name.rfind("url.", 0) == 0) {
+        for (const char* suffix : {".insteadof", ".pushinsteadof"}) {
+            const size_t n = strlen(suffix);
+            if (name.size() > 4 + n && name.compare(name.size() - n, n, suffix) == 0 &&
+                is_ssh_style_url(name.substr(4, name.size() - 4 - n))) {
+                ++ctx->dropped;
+                return 0;
+            }
+        }
+    }
+
+    // "a^" can never match, so this appends and keeps repeated keys (multivars).
+    // A key written without a value is a boolean true in git.
+    return git_config_set_multivar(ctx->out, e->name, "a^", e->value ? e->value : "true");
+}
+
+void setup_git_config(const std::string& state_dir) {
+    namespace fs = std::filesystem;
+
+    git_buf global_path = GIT_BUF_INIT;
+    if (git_config_find_global(&global_path) != 0)
+        return;  // no global config, nothing to sanitise
+    const std::string src(global_path.ptr);
+    git_buf_dispose(&global_path);
+
+    const fs::path dir = fs::path(state_dir) / "git-global";
+    const fs::path tmp = dir / ".gitconfig.tmp";
+    const fs::path dst = dir / ".gitconfig";
+
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec) {
+        log_warn("Cannot create " + dir.string() + " (" + ec.message() +
+                 "); using the global git config unfiltered.");
+        return;
+    }
+    fs::remove(tmp, ec);
+
+    git_config* in = nullptr;
+    ConfigCopyCtx ctx;
+    int err = git_config_open_ondisk(&in, src.c_str());
+    if (err == 0) err = git_config_open_ondisk(&ctx.out, tmp.string().c_str());
+    if (err == 0) err = git_config_foreach(in, copy_config_entry_cb, &ctx);
+    if (in)      git_config_free(in);
+    if (ctx.out) git_config_free(ctx.out);
+
+    if (err != 0) {
+        log_git_error("setup_git_config", err);
+        log_warn("Using the global git config unfiltered.");
+        fs::remove(tmp, ec);
+        return;
+    }
+    if (ctx.dropped == 0) {
+        fs::remove(tmp, ec);  // nothing to strip: leave libgit2's default search path alone
+        return;
+    }
+
+    // The copy mirrors the user's global config, which may hold secrets.
+    fs::permissions(tmp, fs::perms::owner_read | fs::perms::owner_write, ec);
+    fs::rename(tmp, dst, ec);
+    if (ec) {
+        log_warn("Cannot install filtered git config (" + ec.message() +
+                 "); using the global git config unfiltered.");
+        fs::remove(tmp, ec);
+        return;
+    }
+
+    git_libgit2_opts(GIT_OPT_SET_SEARCH_PATH, GIT_CONFIG_LEVEL_GLOBAL,
+                     dir.string().c_str());
+    log_info("Ignoring " + std::to_string(ctx.dropped) + " SSH URL rewrite rule(s) in " +
+             src + " (the daemon authenticates over HTTPS); using filtered copy " +
+             dst.string());
+}
+
 // ── Certificate check callback ────────────────────────────────────────────────
 // Fallback: accept the certificate unconditionally. Only reached when libgit2
 // cannot validate the cert against a CA bundle (e.g. missing bundle on Windows).

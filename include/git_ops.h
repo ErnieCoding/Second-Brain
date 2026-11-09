@@ -28,6 +28,15 @@ git_remote_callbacks make_remote_callbacks(CredPayload* payload);
 // accepting all certs with a warning if none are found
 void setup_ssl();
 
+// Redirect libgit2's global config level to a filtered copy of ~/.gitconfig with
+// SSH-style url.*.insteadOf rules removed (the daemon only authenticates over
+// HTTPS, and such a rule rewrites the stored remote to SSH). Everything else in
+// the global config is kept. Does nothing if there is no such rule. Search paths
+// are process-wide: call once, before any repo is opened, and keep a
+// git_libgit2_init() reference alive for as long as repos are being synced.
+// `state_dir` is where the filtered copy is written (the app's config dir).
+void setup_git_config(const std::string& state_dir);
+
 // Open an existing repo. Returns 0 on success
 int repo_open(git_repository** out, const std::string& path);
 

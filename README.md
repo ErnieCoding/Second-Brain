@@ -127,6 +127,30 @@ A running daemon or service notices the change within about 10 seconds and stops
 
 Multiple repositories can be added by running `--add-repo` multiple times or editing the JSON directly.
 
+### Interaction with your global git config
+
+The daemon authenticates over HTTPS with the token above, but libgit2 applies `url.<base>.insteadOf`
+rewrites from your global `~/.gitconfig`. A rule such as
+
+```ini
+[url "git@github.com:"]
+    insteadOf = https://github.com/
+```
+
+would turn the repo's HTTPS remote into an SSH one, and every fetch would fail (with a misleading
+`config value 'http.followRedirects' was not found` error).
+
+To avoid this, at startup the daemon checks your global config for rewrite rules that point to SSH
+(`git@host:...` or `ssh://...`). If it finds any, it writes a copy of the config without those rules
+to `<config dir>/git-global/.gitconfig` (mode `600`) and uses that copy instead. Everything else —
+`user.name`/`user.email`, line-ending and proxy settings, and so on — is kept. Your real `~/.gitconfig`
+is never modified, and nothing is copied if there is no such rule. Note:
+
+- The copy is made at startup, so restart the daemon after editing `~/.gitconfig`.
+- The startup log line `Ignoring N SSH URL rewrite rule(s) ...` tells you when the filtered copy is in use.
+- Conditional includes (`includeIf`) in the global config are probably not evaluated for the copy.
+- Commit author comes from your global `user.name`/`user.email` when set; the per-repo author fields are only a fallback.
+
 ---
 
 ## Running

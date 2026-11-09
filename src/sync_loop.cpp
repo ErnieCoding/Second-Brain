@@ -2,6 +2,7 @@
 #include "git_ops.h"
 #include "conflict_ui.h"
 #include "logger.h"
+#include "platform.h"
 #include <git2.h>
 #include <chrono>
 #include <filesystem>
@@ -127,7 +128,17 @@ static void perform_sync_cycle(git_repository* repo, const RepoConfig& cfg) {
 
 // SyncLoop
 
-SyncLoop::SyncLoop(const std::string& config_path) : config_path_(config_path) {}
+SyncLoop::SyncLoop(const std::string& config_path) : config_path_(config_path) {
+    // Hold a libgit2 reference for the loop's lifetime: the search-path override
+    // is reset when the last reference is released (e.g. when every repo thread
+    // has exited), and it must be in place before any repo thread opens a repo.
+    git_libgit2_init();
+    try {
+        setup_git_config(get_config_dir());
+    } catch (const std::exception& ex) {
+        log_warn(std::string("Global git config setup failed: ") + ex.what());
+    }
+}
 
 SyncLoop::~SyncLoop() {
     stop();
@@ -136,6 +147,7 @@ SyncLoop::~SyncLoop() {
     for (auto& t : pending_join_) if (t.joinable()) t.join();
     // Join any remaining active threads (running flags already cleared by stop())
     for (auto& [path, entry] : repos_) if (entry.thread.joinable()) entry.thread.join();
+    git_libgit2_shutdown();
 }
 
 void SyncLoop::run() {
